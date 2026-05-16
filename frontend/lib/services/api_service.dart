@@ -1,0 +1,379 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:geolocator/geolocator.dart';
+import 'dart:async';
+import 'package:web_socket_channel/web_socket_channel.dart';
+
+class ApiService {
+  // Change this to your FastAPI URL
+  // For emulator use: http://10.0.2.2:8000
+  // For real device use: http://YOUR_PC_IP:8000
+  static const String baseUrl = 'AppConfig.apiBaseUrl';
+
+  // Secure storage for JWT token
+  // Unlike SharedPreferences, this encrypts data on the device
+  static const _storage = FlutterSecureStorage();
+
+  // ── Token helpers ──────────────────────────────────────────────────────────
+
+  // Save token after login/register
+  static Future<void> saveToken(String token) async {
+    await _storage.write(key: 'access_token', value: token);
+  }
+
+  // Get token for authenticated requests
+  static Future<String?> getToken() async {
+    return await _storage.read(key: 'access_token');
+  }
+
+  // Delete token on logout
+  static Future<void> deleteToken() async {
+    await _storage.delete(key: 'access_token');
+  }
+
+  // ── Auth headers ───────────────────────────────────────────────────────────
+  // Attaches JWT token to every request that needs authentication
+  static Future<Map<String, String>> _authHeaders() async {
+    final token = await getToken();
+    return {
+      'Content-Type': 'application/json',
+      if (token != null) 'Authorization': 'Bearer $token',
+    };
+  }
+
+  // ── Register Customer ──────────────────────────────────────────────────────
+  // Sends customer details to /auth/register/customer
+  // Returns the response map with token, role, user_id, name
+  static Future<Map<String, dynamic>> registerCustomer({
+    required String name,
+    required String email,
+    required String phone,
+    required String password,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/register/customer'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'name': name,
+        'email': email,
+        'phone': phone,
+        'password': password,
+      }),
+    );
+
+    final data = jsonDecode(response.body);
+
+    if (response.statusCode == 200) {
+      // Save token securely on device
+      await saveToken(data['access_token']);
+      return data;
+    } else {
+      // Throw the error message from FastAPI
+      throw Exception(data['detail'] ?? 'Registration failed');
+    }
+  }
+
+  // ── Register Driver ────────────────────────────────────────────────────────
+  // Same as customer but also sends vehicle_number and license_number
+  static Future<Map<String, dynamic>> registerDriver({
+    required String name,
+    required String email,
+    required String phone,
+    required String password,
+    required String vehicleNumber,
+    required String licenseNumber,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/register/driver'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'name': name,
+        'email': email,
+        'phone': phone,
+        'password': password,
+        'vehicle_number': vehicleNumber,
+        'license_number': licenseNumber,
+      }),
+    );
+
+    final data = jsonDecode(response.body);
+
+    if (response.statusCode == 200) {
+      await saveToken(data['access_token']);
+      return data;
+    } else {
+      throw Exception(data['detail'] ?? 'Registration failed');
+    }
+  }
+
+  // ── Login ──────────────────────────────────────────────────────────────────
+  // Sends email, password, role to /auth/login
+  // Returns token + user info on success
+  static Future<Map<String, dynamic>> login({
+    required String email,
+    required String password,
+    required String role,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/login'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'email': email,
+        'password': password,
+        'role': role,
+      }),
+    );
+
+    final data = jsonDecode(response.body);
+
+    if (response.statusCode == 200) {
+      await saveToken(data['access_token']);
+      return data;
+    } else {
+      throw Exception(data['detail'] ?? 'Login failed');
+    }
+  }
+
+  // ── Get Driver Stats ─────────────────────────────────────────────────────
+  // Fetches driver's rating, total trips and earnings from the backend
+  // Called when driver home page loads
+  static Future<Map<String, dynamic>> getDriverStats(String driverId) async {
+    final headers = await _authHeaders();
+    final response = await http.get(
+      Uri.parse('$baseUrl/drivers/stats/$driverId'),
+      headers: headers,
+    );
+
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      throw Exception('Failed to load driver stats');
+    }
+  }
+
+  // ── Get Nearby Autos ──────────────────────────────────────────────────────
+  // Called when customer enters pickup and dropoff location
+  // Returns list of nearby online drivers with fare estimate
+  static Future<List<Map<String, dynamic>>> getNearbyAutos({
+    required double pickupLat,
+    required double pickupLng,
+    required double dropoffLat,
+    required double dropoffLng,
+  }) async {
+    final headers = await _authHeaders();
+    final response = await http.get(
+      Uri.parse(
+        '$baseUrl/rides/nearby-autos'
+        '?pickup_lat=$pickupLat&pickup_lng=$pickupLng'
+        '&dropoff_lat=$dropoffLat&dropoff_lng=$dropoffLng'
+      ),
+      headers: headers,
+    );
+
+    if (response.statusCode == 200) {
+      final List data = jsonDecode(response.body);
+      return data.cast<Map<String, dynamic>>();
+    } else {
+      throw Exception('Failed to get nearby autos');
+    }
+  }
+
+  // ── Book a Ride ───────────────────────────────────────────────────────────
+  // Called when customer confirms booking with a specific driver
+  // Returns ride_id, fare, nearest route points for walking path
+  static Future<Map<String, dynamic>> bookRide({
+    required String userId,
+    required String driverId,
+    required double pickupLat,
+    required double pickupLng,
+    required double dropoffLat,
+    required double dropoffLng,
+    String? pickupAddress,
+    String? dropoffAddress,
+  }) async {
+    final headers = await _authHeaders();
+    final response = await http.post(
+      Uri.parse('$baseUrl/rides/book'),
+      headers: headers,
+      body: jsonEncode({
+        'user_id': userId,
+        'driver_id': driverId,
+        'pickup_latitude': pickupLat,
+        'pickup_longitude': pickupLng,
+        'dropoff_latitude': dropoffLat,
+        'dropoff_longitude': dropoffLng,
+        'pickup_address': pickupAddress,
+        'dropoff_address': dropoffAddress,
+      }),
+    );
+
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      final error = jsonDecode(response.body);
+      throw Exception(error['detail'] ?? 'Booking failed');
+    }
+  }
+  
+  // ── Get Current GPS Location ──────────────────────────────────────────────
+  // Requests location permission from user
+  // Then gets their current GPS coordinates
+  // Returns null if permission denied or location unavailable
+  static Future<Map<String, double>?> getCurrentLocation() async {
+    // Check if location services are enabled on device
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      return null;
+    }
+
+    // Request permission if not already granted
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        return null;
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      return null;
+    }
+
+    // Get current position with high accuracy
+    final position = await Geolocator.getCurrentPosition(
+      desiredAccuracy: LocationAccuracy.high,
+    );
+
+    return {
+      'latitude': position.latitude,
+      'longitude': position.longitude,
+    };
+  }
+
+  // ── WebSocket URL ─────────────────────────────────────────────────────────
+  // Note: WebSocket uses ws:// not http://
+  // For emulator: ws://10.0.2.2:8000
+  // For real device: ws://YOUR_PC_IP:8000
+  static const String wsUrl = 'ws://http://192.168.29.196:8000';
+  // Change to your IP if testing on real device:
+  // static const String wsUrl = 'ws://192.168.29.196:8000';
+
+  // ── Connect driver to WebSocket ───────────────────────────────────────────
+  // Driver app calls this when they go online
+  // Returns a WebSocketChannel that driver uses to send GPS updates
+  static WebSocketChannel connectDriverWebSocket(String driverId) {
+    final channel = WebSocketChannel.connect(
+      Uri.parse('$wsUrl/drivers/ws/driver/$driverId'),
+    );
+    return channel;
+  }
+
+  // ── Connect customer to WebSocket ─────────────────────────────────────────
+  // Customer app calls this after booking is confirmed
+  // Returns a WebSocketChannel that receives live driver location
+  static WebSocketChannel connectCustomerWebSocket(String rideId) {
+    final channel = WebSocketChannel.connect(
+      Uri.parse('$wsUrl/drivers/ws/customer/$rideId'),
+    );
+    return channel;
+  }
+
+  // ── Update Ride Status ────────────────────────────────────────────────────
+  // Called by driver when they accept, start or complete a ride
+  // Updates the status in database
+  static Future<void> updateRideStatus({
+    required String rideId,
+    required String status,
+  }) async {
+    final headers = await _authHeaders();
+    await http.patch(
+      Uri.parse('$baseUrl/rides/$rideId/status'),
+      headers: headers,
+      body: jsonEncode({'status': status}),
+    );
+  }
+
+  // ── Create Razorpay Order ─────────────────────────────────────────────────
+  // Called when customer taps Pay
+  // Returns order_id and key_id needed to open Razorpay payment sheet
+  static Future<Map<String, dynamic>> createPaymentOrder({
+    required String rideId,
+    required double amount,
+  }) async {
+    final headers = await _authHeaders();
+    final response = await http.post(
+      Uri.parse('$baseUrl/payments/create-order'),
+      headers: headers,
+      body: jsonEncode({
+        'ride_id': rideId,
+        'amount': amount,
+      }),
+    );
+
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      final error = jsonDecode(response.body);
+      throw Exception(error['detail'] ?? 'Failed to create order');
+    }
+  }
+
+  // ── Verify Payment ────────────────────────────────────────────────────────
+  // Called after Razorpay payment succeeds
+  // Sends payment IDs to backend for verification
+  static Future<void> verifyPayment({
+    required String rideId,
+    required String orderId,
+    required String paymentId,
+    required String signature,
+  }) async {
+    final headers = await _authHeaders();
+    final response = await http.post(
+      Uri.parse('$baseUrl/payments/verify'),
+      headers: headers,
+      body: jsonEncode({
+        'ride_id': rideId,
+        'razorpay_order_id': orderId,
+        'razorpay_payment_id': paymentId,
+        'razorpay_signature': signature,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      final error = jsonDecode(response.body);
+      throw Exception(error['detail'] ?? 'Payment verification failed');
+    }
+  }
+
+  // ── Cash Payment ──────────────────────────────────────────────────────────
+  // Called when customer selects cash payment
+  // No Razorpay involved — just records payment in database
+  static Future<void> recordCashPayment({
+    required String rideId,
+  }) async {
+    final headers = await _authHeaders();
+    await http.post(
+      Uri.parse('$baseUrl/payments/cash'),
+      headers: headers,
+      body: jsonEncode({'ride_id': rideId}),
+    );
+  }
+
+  // ── Submit Rating ─────────────────────────────────────────────────────────
+  // Called after ride completes
+  // Saves customer's rating for the driver
+  // Also updates driver's average rating in database
+  static Future<void> submitRating({
+    required String rideId,
+    required int rating,
+  }) async {
+    final headers = await _authHeaders();
+    await http.post(
+      Uri.parse('$baseUrl/rides/$rideId/rating'),
+      headers: headers,
+      body: jsonEncode({'rating': rating}),
+    );
+  }
+}
+
