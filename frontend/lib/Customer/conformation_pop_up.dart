@@ -11,14 +11,14 @@ Future<void> handleConfirmResult(
   required String driverName,
   required String vehicalNo,
   required String fare,
-  required String driverId,       // ← NEW
-  required String userId,         // ← NEW
-  required double pickupLat,      // ← NEW
-  required double pickupLng,      // ← NEW
-  required double dropoffLat,     // ← NEW
-  required double dropoffLng,     // ← NEW
-  required String pickupAddress,  // ← NEW
-  required String dropoffAddress, // ← NEW
+  required String driverId,        
+  required String userId,          
+  required double pickupLat,       
+  required double pickupLng,       
+  required double dropoffLat,      
+  required double dropoffLng,      
+  required String pickupAddress,   
+  required String dropoffAddress,  
 }) async {
   if (!didPop) {
     final navigator = Navigator.of(context);

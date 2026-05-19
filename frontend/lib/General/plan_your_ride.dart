@@ -13,6 +13,8 @@ class PlanYourRide extends StatefulWidget {
   final String distance;
   final double? pickupLat;
   final double? pickupLng;
+  final double? dropoffLat;
+  final double? dropoffLng;
 
   const PlanYourRide({
     super.key,
@@ -23,6 +25,8 @@ class PlanYourRide extends StatefulWidget {
     required this.distance,
     this.pickupLat,
     this.pickupLng,
+    this.dropoffLat,
+    this.dropoffLng,
   });
 
   @override
@@ -231,35 +235,16 @@ class PlanYourRideState extends State<PlanYourRide> {
                             onPressed: (pickupController.text.isNotEmpty &&
                                     dropoffController.text.isNotEmpty)
                                 ? () {
-                                    if (!context.mounted) return;
-                                    if (widget.userType.toLowerCase() ==
-                                        'driver') {
-                                      Navigator.push(
-                                        context,
-                                        MaterialPageRoute(
-                                          builder: (_) => DriverOnline(
-                                            source: pickupController.text,
-                                            destination: dropoffController.text,
-                                          ),
+                                    // Only driver uses this screen now
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => DriverOnline(
+                                          source: pickupController.text,
+                                          destination: dropoffController.text,
                                         ),
-                                      );
-                                    } else if (widget.userType.toLowerCase() ==
-                                        'customer') {
-                                      Navigator.push(
-                                        context,
-                                        MaterialPageRoute(
-                                          builder: (_) => AutoricksawList(
-                                            pickupLat: widget.pickupLat ?? 23.0215,
-                                            pickupLng: widget.pickupLng ?? 72.5800,
-                                            // Dropoff hardcoded for now — will fix with geocoding
-                                            dropoffLat: 23.0462,
-                                            dropoffLng: 72.5160,
-                                            pickupAddress: pickupController.text,
-                                            dropoffAddress: dropoffController.text,
-                                          ),
-                                        ),
-                                      );
-                                    }
+                                      ),
+                                    );
                                   }
                                 : null,
                             style: ElevatedButton.styleFrom(

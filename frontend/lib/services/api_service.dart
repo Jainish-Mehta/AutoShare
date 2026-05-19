@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:autoshare/config.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:geolocator/geolocator.dart';
@@ -9,7 +10,7 @@ class ApiService {
   // Change this to your FastAPI URL
   // For emulator use: http://10.0.2.2:8000
   // For real device use: http://YOUR_PC_IP:8000
-  static const String baseUrl = 'AppConfig.apiBaseUrl';
+  static String get baseUrl => AppConfig.apiBaseUrl;
 
   // Secure storage for JWT token
   // Unlike SharedPreferences, this encrypts data on the device
@@ -237,12 +238,14 @@ class ApiService {
     }
 
     if (permission == LocationPermission.deniedForever) {
+      await Geolocator.openAppSettings();
       return null;
     }
 
     // Get current position with high accuracy
     final position = await Geolocator.getCurrentPosition(
       desiredAccuracy: LocationAccuracy.high,
+      timeLimit: const Duration(seconds: 10),
     );
 
     return {
@@ -255,7 +258,7 @@ class ApiService {
   // Note: WebSocket uses ws:// not http://
   // For emulator: ws://10.0.2.2:8000
   // For real device: ws://YOUR_PC_IP:8000
-  static const String wsUrl = 'ws://http://192.168.29.196:8000';
+  static String get wsUrl => AppConfig.wsBaseUrl;
   // Change to your IP if testing on real device:
   // static const String wsUrl = 'ws://192.168.29.196:8000';
 
@@ -374,6 +377,58 @@ class ApiService {
       headers: headers,
       body: jsonEncode({'rating': rating}),
     );
+  }
+
+  // ── Search Address (Nominatim) ────────────────────────────────────────────
+  // Uses OpenStreetMap's Nominatim API to search addresses
+  // Returns list of matching addresses with coordinates
+  // Called on every keystroke in pickup/dropoff field
+  static Future<List<Map<String, dynamic>>> searchAddress(String query) async {
+    if (query.length < 3) return [];
+
+    final response = await http.get(
+      Uri.parse(
+        'https://nominatim.openstreetmap.org/search'
+        '?q=${Uri.encodeComponent(query)}'
+        '&format=json'
+        '&limit=7'
+        '&countrycodes=in'
+        '&addressdetails=1'
+        '&accept-language=en'
+      ),
+      headers: {
+        'User-Agent': 'AutoShare/1.0',  // Nominatim requires this
+      },
+    );
+
+    if (response.statusCode == 200) {
+      final List data = jsonDecode(response.body);
+      return data.map<Map<String, dynamic>>((item) {
+        // Build a cleaner display name
+        String displayName = item['display_name'];
+
+        return {
+          'display_name': displayName,
+          'short_name': _buildShortName(item),  // ← shorter cleaner name
+          'lat': double.parse(item['lat']),
+          'lng': double.parse(item['lon']),
+        };
+      }).toList();
+    }
+    return [];
+  }
+  // Build a shorter readable name for the suggestion
+  static String _buildShortName(Map item) {
+    final address = item['address'] ?? {};
+    final parts = <String>[];
+
+    // Add the most specific parts first
+    if (address['road'] != null) parts.add(address['road']);
+    if (address['suburb'] != null) parts.add(address['suburb']);
+    if (address['city'] != null) parts.add(address['city']);
+    else if (address['town'] != null) parts.add(address['town']);
+
+    return parts.isNotEmpty ? parts.join(', ') : item['display_name'];
   }
 }
 

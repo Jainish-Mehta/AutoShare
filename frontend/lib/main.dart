@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'package:autoshare/config.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:autoshare/Login&Signup/login_page.dart';
 import 'package:autoshare/Customer/customer_home_page.dart';
@@ -50,6 +52,10 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 
   Future<void> _navigateAfterDelay() async {
+    try {
+    await http.get(Uri.parse(AppConfig.apiBaseUrl));
+  } catch (_) {}
+  
     await Future.delayed(const Duration(seconds: 1));
 
     SharedPreferences prefs = await SharedPreferences.getInstance();

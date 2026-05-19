@@ -16,6 +16,7 @@ class LoginPage extends StatefulWidget {
 
 class _LoginPageState extends State<LoginPage> {
   late String selectedRole;
+  bool _isLoading = false;
 
   @override
   void initState() {
@@ -142,55 +143,61 @@ class _LoginPageState extends State<LoginPage> {
                           ],
                         ),
                         ElevatedButton(
-                          onPressed: () async {
-                            if (_controllerEmail.text.isEmpty) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('Please enter email'), backgroundColor: Colors.red),
-                              );
-                              return;
-                            }
-                            if (_controllerPassword.text.isEmpty) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('Please enter password'), backgroundColor: Colors.red),
-                              );
-                              return;
-                            }
-
+                          onPressed:_isLoading ? null : () async {
+                            setState(() => _isLoading = true);
                             try {
-                              // Call login API with email, password and selected role
-                              final result = await ApiService.login(
-                                email: _controllerEmail.text,
-                                password: _controllerPassword.text,
-                                role: selectedRole,
-                              );
+                              if (_controllerEmail.text.isEmpty) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('Please enter email'), backgroundColor: Colors.red),
+                                );
+                                return;
+                              }
+                              if (_controllerPassword.text.isEmpty) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('Please enter password'), backgroundColor: Colors.red),
+                                );
+                                return;
+                              }
 
-                              // Save session info to SharedPreferences
-                              final prefs = await SharedPreferences.getInstance();
-                              await prefs.setBool('isLoggedIn', true);
-                              await prefs.setString('userType', result['role']);
-                              await prefs.setString('userName', result['name']);
-                              await prefs.setString('userId', result['user_id']);
+                              try {
+                                // Call login API with email, password and selected role
+                                final result = await ApiService.login(
+                                  email: _controllerEmail.text,
+                                  password: _controllerPassword.text,
+                                  role: selectedRole,
+                                );
 
-                              if (!context.mounted) return;
+                                // Save session info to SharedPreferences
+                                final prefs = await SharedPreferences.getInstance();
+                                await prefs.setBool('isLoggedIn', true);
+                                await prefs.setString('userType', result['role']);
+                                await prefs.setString('userName', result['name']);
+                                await prefs.setString('userId', result['user_id']);
 
-                              // Go to correct home page based on role
-                              Navigator.of(context).pushAndRemoveUntil(
-                                MaterialPageRoute(
-                                  builder: (_) => result['role'] == 'customer'
-                                      ? const CustomerHomePage()
-                                      : const DriverHomePage(),
-                                ),
-                                (route) => false,
-                              );
+                                if (!context.mounted) return;
 
-                            } catch (e) {
-                              if (!context.mounted) return;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(e.toString().replaceAll('Exception: ', '')),
-                                  backgroundColor: Colors.red,
-                                ),
-                              );
+                                // Go to correct home page based on role
+                                Navigator.of(context).pushAndRemoveUntil(
+                                  MaterialPageRoute(
+                                    builder: (_) => result['role'] == 'customer'
+                                        ? const CustomerHomePage()
+                                        : const DriverHomePage(),
+                                  ),
+                                  (route) => false,
+                                );
+
+                              } catch (e) {
+                                if (!context.mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(e.toString().replaceAll('Exception: ', '')),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
+                              }
+                            } 
+                            finally {
+                              if (mounted) setState(() => _isLoading = false);
                             }
                           },
                           style: ElevatedButton.styleFrom(
@@ -204,10 +211,16 @@ class _LoginPageState extends State<LoginPage> {
                               borderRadius: BorderRadius.circular(0),
                             ),
                           ),
-                          child: const Text(
-                            'Login',
-                            style: TextStyle(color: Colors.black),
-                          ),
+                          child: _isLoading ?
+                            const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(
+                                color: Colors.black,
+                                strokeWidth: 2,
+                              ),
+                            )
+                          : const Text('Login', style: TextStyle(color: Colors.black)),
                         ),
                       ],
                     ),
